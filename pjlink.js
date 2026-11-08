@@ -189,6 +189,7 @@ class PJInstance extends InstanceBase {
 		if (this.config.host) {
 			this.authOK = true
 			this.commands = []
+			this.lastCmd = null
 			const port = this.config.port || 4352
 
 			this.socket = new TCPHelper(this.config.host, port)
