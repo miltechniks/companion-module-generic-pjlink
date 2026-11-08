@@ -5,6 +5,8 @@ import crypto from 'crypto'
 import * as CONFIG from './choices.js'
 import { UpgradeScripts } from './upgrades.js'
 
+const RESPONSE_TIMEOUT = 10000
+
 function ar2obj(a) {
 	return a.map((e, i) => ({ id: `${i}`, label: e }))
 }
@@ -50,6 +52,16 @@ class PJInstance extends InstanceBase {
 			delete this.restartTimer
 		}
 
+		if (this.socketTimer !== undefined) {
+			clearInterval(this.socketTimer)
+			delete this.socketTimer
+		}
+
+		if (this.watchdogTimer !== undefined) {
+			clearInterval(this.watchdogTimer)
+			delete this.watchdogTimer
+		}
+
 		if (!restart) {
 			this.log('debug', `Destroy ${this.id}`)
 		}
@@ -87,6 +99,45 @@ class PJInstance extends InstanceBase {
 		this.init_variables()
 		this.updateDynamicContent() // Update all dynamic content
 		this.init_tcp()
+		this.watchdogTimer = setInterval(this.checkResponseTimeout.bind(this), 1000)
+	}
+
+	checkResponseTimeout() {
+		if (this.socket === undefined || !this.socket.isConnected) {
+			return
+		}
+		const now = Date.now()
+		let reason
+		if (!this.greetingReceived && now - this.connectedAt > RESPONSE_TIMEOUT) {
+			reason = 'No PJLink greeting from projector'
+		} else if (this.lastCmd != null && this.lastTx > this.lastRx && now - this.lastTx > RESPONSE_TIMEOUT) {
+			reason = `No response to ${this.lastCmd}`
+		}
+		if (!reason) {
+			return
+		}
+
+		if (this.lastStatus != InstanceStatus.ConnectionFailure + ';Timeout') {
+			this.log('error', `${reason}, reconnecting`)
+			this.updateStatus(InstanceStatus.ConnectionFailure, 'No response')
+			this.lastStatus = InstanceStatus.ConnectionFailure + ';Timeout'
+		}
+		this.pjConnected = false
+		this.authOK = false
+		this.lastCmd = null
+		this.commands = []
+		if (this.socketTimer) {
+			clearInterval(this.socketTimer)
+			delete this.socketTimer
+		}
+		this.socket.destroy()
+		delete this.socket
+		this.restartSocket()
+	}
+
+	async transmit(cmd) {
+		this.lastTx = Date.now()
+		return this.socket.send(this.passwordstring + cmd + '\r')
 	}
 
 	async check_auth(data, cb) {
@@ -234,6 +285,10 @@ class PJInstance extends InstanceBase {
 				}
 				this.authOK = false
 				this.lastQuery = null
+				this.greetingReceived = false
+				this.connectedAt = Date.now()
+				this.lastTx = 0
+				this.lastRx = 0
 			})
 
 			this.socket.on('end', () => {
@@ -278,6 +333,7 @@ class PJInstance extends InstanceBase {
 
 			this.socket.on('receiveline', async (data) => {
 				this.connect_time = Date.now()
+				this.lastRx = Date.now()
 
 				if (this.DebugLevel > 1) {
 					this.log('debug', `PJLINK: < ${stamp()} ${data}`)
@@ -285,6 +341,7 @@ class PJInstance extends InstanceBase {
 
 				// auth password setup
 				if (data.match(/^PJLINK*/i)) {
+					this.greetingReceived = true
 					this.check_auth(data, cb)
 					return
 				}
@@ -558,7 +615,9 @@ class PJInstance extends InstanceBase {
 						this.log('debug', `PJLINK: >> ${nextCmd}`)
 					}
 					this.lastCmd = splitCmd(nextCmd)
-					await this.socket?.send(this.passwordstring + nextCmd + '\r')
+					if (this.socket) {
+						await this.transmit(nextCmd)
+					}
 				} else {
 					if (this.socketTimer) {
 						clearInterval(this.socketTimer)
@@ -574,7 +633,7 @@ class PJInstance extends InstanceBase {
 							let cmd = this.commands.shift()
 							this.connect_time = Date.now()
 							this.lastCmd = splitCmd(cmd)
-							await this.socket.send(this.passwordstring + cmd + '\r')
+							await this.transmit(cmd)
 							clearInterval(this.socketTimer)
 							delete this.socketTimer
 						} else {
@@ -630,7 +689,7 @@ class PJInstance extends InstanceBase {
 		} else if (this.lastCmd == null && cued == 0 && this.pjConnected) {
 			// no outstanding commands, send immediately
 			try {
-				await this.socket.send(this.passwordstring + cmd + '\r')
+				await this.transmit(cmd)
 				sent = true
 				this.lastCmd = splitCmd(cmd)
 			} catch (error) {
