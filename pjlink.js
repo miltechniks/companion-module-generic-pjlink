@@ -198,9 +198,9 @@ class PJInstance extends InstanceBase {
 					// not really connected, yet
 					return
 				}
-				if (this.lastStatus != InstanceStatus.Error + ';' + err.name) {
-					this.updateStatus(InstanceStatus.Error, 'Network ' + err.message)
-					this.lastStatus = InstanceStatus.Error + ';' + err.name
+				if (this.lastStatus != InstanceStatus.UnknownError + ';' + err.name) {
+					this.updateStatus(InstanceStatus.UnknownError, 'Network ' + err.message)
+					this.lastStatus = InstanceStatus.UnknownError + ';' + err.name
 					this.log('error', 'Network ' + err.message)
 				}
 				this.pjConnected = false
@@ -239,10 +239,10 @@ class PJInstance extends InstanceBase {
 			this.socket.on('end', () => {
 				this.pjConnected = false
 				this.authOK = false
-				if (this.lastStatus != InstanceStatus.Error + ';Disc') {
+				if (this.lastStatus != InstanceStatus.Disconnected + ';Disc') {
 					this.log('error', 'Projector Disconnected')
-					this.updateStatus(InstanceStatus.Error, 'Disconnected')
-					this.lastStatus = InstanceStatus.Error + ';Disc'
+					this.updateStatus(InstanceStatus.Disconnected, 'Disconnected')
+					this.lastStatus = InstanceStatus.Disconnected + ';Disc'
 				}
 				// set timer to retry connection in 30 secs
 				if (this.socketTimer) {
@@ -326,7 +326,7 @@ class PJInstance extends InstanceBase {
 						case '4':
 							errorText = 'Projector/Display failure'
 							newState = 'error'
-							newStatus = InstanceStatus.Error
+							newStatus = InstanceStatus.UnknownError
 							break
 					}
 					if (cmd == '%2INNM' || (this.projector.powerState != '1' && err == '3')) {
